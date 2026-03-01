@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Multi-Format Vokabeltrainer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
+    <style>
+        :root { --primary: #6366f1; --success: #22c55e; --danger: #ef4444; --bg: #f8fafc; --card-bg: #ffffff; --text: #1e293b; }
+        body { font-family: 'Inter', sans-serif; background-color: var(--bg); color: var(--text); margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+        .app-container { width: 100%; max-width: 500px; padding: 20px; text-align: center; }
+        .setup-box { background: var(--card-bg); padding: 40px; border-radius: 24px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+        .file-label { display: inline-block; background: var(--primary); color: white; padding: 16px 32px; border-radius: 12px; cursor: pointer; font-weight: 600; margin-top: 20px; transition: 0.2s; }
+        .file-label:hover { transform: translateY(-2px); opacity: 0.9; }
+        #trainer { display: none; width: 100%; }
+        .progress-bar { height: 8px; background: #e2e8f0; border-radius: 4px; margin-bottom: 20px; overflow: hidden; }
+        #progress-fill { height: 100%; background: var(--primary); width: 0%; transition: width 0.4s; }
+        .card { background: var(--card-bg); border-radius: 28px; box-shadow: 0 20px 25px rgba(0,0,0,0.1); padding: 50px 20px; min-height: 200px; display: flex; flex-direction: column; justify-content: center; margin-bottom: 20px; }
+        .word-latin { font-size: 2rem; font-weight: 800; margin-bottom: 10px; }
+        .word-german { font-size: 1.4rem; color: var(--success); display: none; font-weight: 600; }
+        .btn { border: none; border-radius: 16px; padding: 20px; font-size: 1.1rem; font-weight: 700; cursor: pointer; width: 100%; margin-bottom: 10px; }
+        .btn-show { background: var(--primary); color: white; }
+        .btn-group { display: none; gap: 10px; }
+        .btn-yes { background: var(--success); color: white; flex: 2; }
+        .btn-no { background: var(--danger); color: white; flex: 1; }
+        #loading { display: none; margin-top: 20px; }
+        .spinner { border: 4px solid #f3f3f3; border-top: 4px solid var(--primary); border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 10px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+<div class="app-container">
+    <div id="setup" class="setup-box">
+        <h1>Universal Trainer</h1>
+        <p style="color: #64748b;">Lade eine PDF, ein Foto oder eine Textdatei hoch.</p>
+        <label class="file-label">
+            Datei / Foto wählen
+            <input type="file" id="fileInput" accept="application/pdf, image/*, text/plain" style="display: none;">
+        </label>
+        <div id="loading">
+            <div class="spinner"></div>
+            <p id="loading-text">Verarbeite Daten...</p>
+        </div>
+    </div>
+
+    <div id="trainer">
+        <div class="progress-bar"><div id="progress-fill"></div></div>
+        <div class="card">
+            <div class="word-latin" id="latin"></div>
+            <div class="word-german" id="german"></div>
+        </div>
+        <button class="btn btn-show" id="btnShow" onclick="show()">Lösung anzeigen</button>
+        <div class="btn-group" id="btnGroup">
+            <button class="btn btn-no" onclick="handle(false)">✗</button>
+            <button class="btn btn-yes" onclick="handle(true)">Gewusst ✓</button>
+        </div>
+        <p id="count" style="color: #64748b; font-size: 0.9rem;"></p>
+    </div>
+</div>
+
+<script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+    let vocabs = [];
+    let total = 0;
+
+    document.getElementById('fileInput').addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        document.getElementById('loading').style.display = 'block';
+
+        if (file.type === "application/pdf") {
+            processPDF(file);
+        } else if (file.type.startsWith("image/")) {
+            processImage(file);
+        } else {
+            processText(file);
+        }
+    });
+
+    // 1. PDF VERARBEITUNG
+    async function processPDF(file) {
+        const reader = new FileReader();
+        reader.onload = async function() {
+            const pdf = await pdfjsLib.getDocument({data: new Uint8Array(this.result)}).promise;
+            let text = "";
+            for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const content = await page.getTextContent();
+                text += content.items.map(s => s.str).join(" ") + "\n";
+            }
+            parseLogic(text);
+        };
+        reader.readAsArrayBuffer(file);
+    }
+
+    // 2. FOTO VERARBEITUNG (OCR)
+    async function processImage(file) {
+        document.getElementById('loading-text').innerText = "Texterkennung läuft (OCR)...";
+        const result = await Tesseract.recognize(file, 'deu+lat');
+        parseLogic(result.data.text);
+    }
+
+    // 3. TEXTDATEI VERARBEITUNG
+    function processText(file) {
+        const reader = new FileReader();
+        reader.onload = (e) => parseLogic(e.target.result);
+        reader.readAsText(file);
+    }
+
+    function parseLogic(raw) {
+        // Bereinigung und Suche nach Tabellenstruktur
+        const cleanText = raw.replace(/\r/g, "").replace(/\n/g, " ");
+        
+        // Erkennt: "Zahl","Latein","Grammatik","Deutsch"
+        const regex = /"(\d+)\s*","([^"]+)","([^"]+)","([^"]+)"/g;
+        let matches = [...cleanText.matchAll(regex)];
+        
+        // Falls kein Tabellenformat gefunden wurde (z.B. bei Fotos), 
+        // versuchen wir eine einfache Zeilentrennung (Latein = Deutsch)
+        if (matches.length === 0) {
+            const lines = raw.split('\n');
+            vocabs = lines.map(line => {
+                const parts = line.split(/[;=,]/); // Trennung bei ; oder = oder ,
+                if (parts.length >= 2) {
+                    return { l: parts[0].trim(), g: parts[1].trim() };
+                }
+                return null;
+            }).filter(v => v && v.l.length > 2);
+        } else {
+            vocabs = matches.map(m => ({ l: m[2].trim(), g: m[4].trim() }));
+        }
+
+        if (vocabs.length > 0) {
+            total = vocabs.length;
+            vocabs.sort(() => Math.random() - 0.5);
+            document.getElementById('setup').style.display = 'none';
+            document.getElementById('trainer').style.display = 'block';
+            render();
+        } else {
+            alert("Konnte keine Vokabeln erkennen. Bei Fotos: Achte auf gute Beleuchtung!");
+            document.getElementById('loading').style.display = 'none';
+        }
+    }
+
+    function render() {
+        if (vocabs.length === 0) {
+            document.getElementById('latin').innerText = "Fertig! 🎉";
+            document.getElementById('german').style.display = "none";
+            document.getElementById('btnShow').style.display = "none";
+            return;
+        }
+        document.getElementById('latin').innerText = vocabs[0].l;
+        document.getElementById('german').innerText = vocabs[0].g;
+        document.getElementById('german').style.display = "none";
+        document.getElementById('btnShow').style.display = "block";
+        document.getElementById('btnGroup').style.display = "none";
+        document.getElementById('count').innerText = vocabs.length + " Wörter übrig";
+        document.getElementById('progress-fill').style.width = ((total - vocabs.length) / total * 100) + "%";
+    }
+
+    function show() {
+        document.getElementById('german').style.display = "block";
+        document.getElementById('btnShow').style.display = "none";
+        document.getElementById('btnGroup').style.display = "flex";
+    }
+
+    function handle(correct) {
+        const item = vocabs.shift();
+        if (!correct) vocabs.push(item);
+        render();
+    }
+</script>
+</body>
+</html>
